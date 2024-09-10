@@ -1,4 +1,7 @@
 # update worker_row, worker_col according to movement
+import copy
+
+
 def worker_location_change(rows, columns):
     model_content = f'''
 next(worker_row):=
@@ -100,17 +103,18 @@ init(worker_row) := {worker_holder[0]}; init(worker_col) := {worker_holder[1]};
     
 DEFINE
     down_step := worker_row<{rows-1} & !walls[worker_row+1][worker_col] & !board[worker_row+1][worker_col];
-    down_push := worker_row<{rows-2} & board[worker_row+1][worker_col] & !walls[worker_row+2][worker_col] & !board[worker_row+2][worker_col];
+    down_push := worker_row<{rows-2} & board[worker_row+1][worker_col] & !walls[worker_row+2][worker_col] & !board[worker_row+2][worker_col] & !deadlocks[worker_row+2][worker_col];
 
     right_step := worker_col<{columns-1} & !walls[worker_row][worker_col+1] & !board[worker_row][worker_col+1];
-    right_push := worker_col<{columns-2} & board[worker_row][worker_col+1] & !walls[worker_row][worker_col+2] & !board[worker_row][worker_col+2];
+    right_push := worker_col<{columns-2} & board[worker_row][worker_col+1] & !walls[worker_row][worker_col+2] & !board[worker_row][worker_col+2] & !deadlocks[worker_row][worker_col+2];
 
     left_step := worker_col>0 & !walls[worker_row][worker_col - 1] & !board[worker_row][worker_col - 1];
-    left_push := worker_col>1 & board[worker_row][worker_col - 1] & !walls[worker_row][worker_col - 2] & !board[worker_row][worker_col - 2];
+    left_push := worker_col>1 & board[worker_row][worker_col - 1] & !walls[worker_row][worker_col - 2] & !board[worker_row][worker_col - 2] & !deadlocks[worker_row][worker_col - 2];
 
     up_step := worker_row>0 & !walls[worker_row - 1][worker_col] & !board[worker_row - 1][worker_col];
-    up_push := worker_row>1 & board[worker_row - 1][worker_col] & !walls[worker_row - 2][worker_col] & !board[worker_row - 2][worker_col];
+    up_push := worker_row>1 & board[worker_row - 1][worker_col] & !walls[worker_row - 2][worker_col] & !board[worker_row - 2][worker_col] & !deadlocks[worker_row - 2][worker_col];
 '''
+
     model_content += f'''
 walls :='''
     # creating the walls constant
@@ -129,10 +133,10 @@ walls :='''
             model_content += ",\n"
 
     model_content += "];"
-    deadlock_matrix=get_deadlock_matrix(board_content)
 
+    deadlock_matrix=find_deadlock_squares(board_content)
     model_content += f'''
-deadlock :='''
+deadlocks :='''
     # creating the walls constant
     model_content += " [\n"
     for i in range(rows):
@@ -151,16 +155,6 @@ deadlock :='''
     model_content += "];"
 
 
-    model_content+=f"\nINVARSPEC"
-    model_content+=f"\n\t"
-    for i in range(rows):
-        for j in range(columns):
-            if deadlock_matrix[i][j] == True:
-                model_content += f"!board[{i}][{j}] & "
-    model_content = model_content[:-3]  # remove the last " & "
-    model_content+=f";\n"
-
-
     model_content += f"DEFINE\n"
     model_content +=f"\treach:= "
     for i in range(rows):
@@ -174,104 +168,86 @@ deadlock :='''
     
     return model_content
 
-def parse_board(board_str):
-    """ Parses the board string into a 2D list. """
-    return [list(row) for row in board_str.strip().split('\n')]
+# Define Sokoban elements
+WALL = '#'
+FLOOR = '-'
+BOX = '$'
+GOAL = '.'
+PLAYER = '@'
+BOX_ON_GOAL = '*'
+PLAYER_ON_GOAL = '+'
 
-def is_corner(board, x, y):
-    """ Checks if the cell at (x, y) is a corner cell. """
-    max_x = len(board) - 1
-    max_y = len(board[0]) - 1
+# Helper functions to process Sokoban board
+def parse_xsb(xsb_str):
+    """Parses the Sokoban board from XSB format string."""
+    board = [list(line) for line in xsb_str.strip().splitlines()]
+    return board
 
-    # Boundary check to prevent index errors
-    if x == 0 or x == max_x or y == 0 or y == max_y or board[x][y]=='#' or board[x][y]=='.':
-        return False  # Edges but not corners
+def clear_board(board):
+    """Clears all boxes from the board to prepare for the pull algorithm."""
+    cleared_board = copy.deepcopy(board)
+    for y, row in enumerate(cleared_board):
+        for x, cell in enumerate(row):
+            if cell == BOX or cell == BOX_ON_GOAL:
+                cleared_board[y][x] = GOAL if cell == BOX_ON_GOAL else FLOOR
+            if cell == PLAYER or cell == PLAYER_ON_GOAL:
+                cleared_board[y][x] = GOAL if cell == PLAYER_ON_GOAL else FLOOR
 
-    # Check for corners
-    top_left = (board[x-1][y] == '#' and board[x][y-1] == '#')
-    top_right = (board[x-1][y] == '#' and board[x][y+1] == '#')
-    bottom_left = (board[x+1][y] == '#' and board[x][y-1] == '#')
-    bottom_right = (board[x+1][y] == '#' and board[x][y+1] == '#')
+    return cleared_board
 
-    return top_left or top_right or bottom_left or bottom_right
+def find_goals(board):
+    """Finds the coordinates of all goal squares."""
+    goals = []
+    for y, row in enumerate(board):
+        for x, cell in enumerate(row):
+            if cell in [GOAL, PLAYER_ON_GOAL, BOX_ON_GOAL]:
+                goals.append((y, x))
+    return goals
 
-def check_corners(board):
-    """ Returns a matrix indicating whether each cell is a corner. """
-    rows = len(board)
-    cols = len(board[0])
-    corner_matrix = [[False] * cols for _ in range(rows)]
+def is_free_square(board, y, x):
+    """Checks if a square is free (walkable) for the player."""
+    return board[y][x] in [FLOOR, GOAL]
 
-    for x in range(1, rows - 1):  # Avoid the edges
-        for y in range(1, cols - 1):  # Avoid the edges
-            corner_matrix[x][y] = is_corner(board, x, y)
-
-    return corner_matrix
-
-def check_row_deadlocks(board):
-    rows = len(board)
-    cols = len(board[0])
-    deadlock_matrix = [[False for _ in range(cols)] for _ in range(rows)]
+def pull_box(board, start_y, start_x, visited):
+    """Performs the pull algorithm starting from a goal square."""
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    stack = [(start_y, start_x)]
+    visited.add((start_y, start_x))
     
-    for i in range(rows):
-        start = -1  # Start of a potential deadlock segment
-        for j in range(cols):
-            if board[i][j] == '#':
-                if start != -1:  # There was a segment before this wall
-                    if '.' not in board[i][start:j]:  # Check for no goals in the segment
-                        all_above_blocked = all(board[k][m] == '#' for m in range(start, j) for k in range(i))
-                        all_below_blocked = all(board[k][m] == '#' for m in range(start, j) for k in range(i+1, rows))
-                        if all_above_blocked or all_below_blocked:
-                            for k in range(start, j):
-                                deadlock_matrix[i][k] = True
-                start = j + 1  # Update start to the position after the wall
-            elif board[i][j] == '.':
-                start = -1  # Reset start because a goal disrupts the potential deadlock segment
+    while stack:
+        y, x = stack.pop()
+        
+        for dy, dx in directions:
+            new_y, new_x = y + dy, x + dx
+            
+            # Check if pulling is possible (opposite side is free)
+            if (0 < new_y < (len(board)-1) and 0 < new_x < (len(board[0])-1) and 
+                (new_y, new_x) not in visited and is_free_square(board, new_y, new_x)and is_free_square(board, new_y+dy, new_x+dx)):
+                
+                visited.add((new_y, new_x))
+                stack.append((new_y, new_x))
 
-    return deadlock_matrix
-
-def check_column_deadlocks(board):
-    rows = len(board)
-    cols = len(board[0])
-    deadlock_matrix = [[False for _ in range(cols)] for _ in range(rows)]
+def find_deadlock_squares(xsb_str):
+    """Identifies simple deadlock squares on the Sokoban board."""
+    board = parse_xsb(xsb_str)
+    goals = find_goals(board)
+    visited = set()
     
-    for j in range(cols):
-        start = -1  # Start of a potential deadlock segment
-        for i in range(rows):
-            if board[i][j] == '#':
-                if start != -1:  # There was a segment before this wall
-                    if '.' not in [board[k][j] for k in range(start, i)]:  # Check for no goals in the segment
-                        # Check if all cells to the immediate left are walls
-                        all_left_blocked = j > 0 and all(board[k][j-1] == '#' for k in range(start, i))
-                        # Check if all cells to the immediate right are walls
-                        all_right_blocked = j < cols-1 and all(board[k][j+1] == '#' for k in range(start, i))
-                        
-                        if all_left_blocked or all_right_blocked:
-                            for k in range(start, i):
-                                deadlock_matrix[k][j] = True
-                start = i + 1  # Update start to the position after the wall
-            elif board[i][j] == '.':
-                start = -1  # Reset start because a goal disrupts the potential deadlock segment
-
-    return deadlock_matrix
-
-def combine_deadlocks(*matrices):
-    """Combine multiple deadlock matrices into one by performing an element-wise logical OR."""
-    rows = len(matrices[0])
-    cols = len(matrices[0][0])
-    combined_matrix = [[False] * cols for _ in range(rows)]
+    # Clear the board of all boxes
+    cleared_board = clear_board(board)
     
-    for i in range(rows):
-        for j in range(cols):
-            # Apply logical OR across the same element in all matrices
-            combined_matrix[i][j] = any(matrix[i][j] for matrix in matrices)
+    # Iterate over all goal squares
+    for goal_y, goal_x in goals:
+        # Place a box at the goal square
+        temp_board = copy.deepcopy(cleared_board)
+        temp_board[goal_y][goal_x] = BOX
+        
+        # Perform the pull operation
+        pull_box(temp_board, goal_y, goal_x, visited)
     
-    return combined_matrix
-
-def get_deadlock_matrix(board_str):
-    board = parse_board(board_str)
-    col_deadlock_matrix = check_column_deadlocks(board)
-    row_deadlock_matrix=check_row_deadlocks(board)
-    corner_deadlock_matrix=check_corners(board)
-    # Combine all deadlock matrices into one
-    deadlock_matrix = combine_deadlocks(col_deadlock_matrix, row_deadlock_matrix, corner_deadlock_matrix)
+    #Creates a boolean matrix of the same size as the Sokoban board based on the visited set.
+    # b
+    deadlock_matrix = [[True for _ in row] for row in board]
+    for (y, x) in visited:
+        deadlock_matrix[y][x] = False
     return deadlock_matrix
