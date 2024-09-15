@@ -54,77 +54,6 @@ def run_takaken_solver(solver_path, board_path, output_file, time_limit=600, lev
             print(f"Peak Memory Usage: {peak_memory_usage[0]:.2f} MB\n")
     except Exception as e:
         print(f"Failed to run the takaken74 solver: {e}")
-
-def run_nuxMv_solver(solver_path, board_path, output_file, iterative_mode=False, engine='SAT', steps_num=None):
-    """
-    Runs the nuXmv_solver.exe with the specified parameters directly and enforces a timeout using psutil.
-    Monitors and records the peak memory usage of the subprocess.
-    """
-    if not os.path.isfile(solver_path):
-        print(f"File not found: {solver_path}")
-        return
-
-    command = [solver_path, board_path]
-    command.extend(['-ITERATIVE', str(iterative_mode)])
-    command.extend(['-ENGINE', engine])
-    if steps_num is not None:
-        command.extend(['-STEPS', str(steps_num)])
-
-    try:
-        # Start the process and enforce a timeout with communicate()
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        ps_process = psutil.Process(process.pid)  # Get the psutil process object
-        peak_memory_usage = 0  # Track peak memory usage
-
-        try:
-            # Capture the output and error (if any) from the process with a timeout
-            stdout, stderr = process.communicate(timeout=600)
-            return_code = process.returncode
-        except subprocess.TimeoutExpired:
-            print("The command exceeded the timeout of 10 minutes and was terminated.")
-            
-            # Kill the process and any child processes
-            parent = psutil.Process(process.pid)
-            for child in parent.children(recursive=True):
-                child.kill()
-            parent.kill()
-
-            with open(output_file, 'a') as f:
-                f.write("\n--- nuXmv Sokoban Solver Results ---\n")
-                f.write("nuXmv Solver cannot solve this board in 10 minutes.\n")
-                f.write(f"Engine: {engine} Iterative Mode: {iterative_mode} Number of steps: {steps_num}\n")
-                f.write(f"Peak Memory Usage: {peak_memory_usage:.2f} MB\n")
-            return  # Exit the function
-
-        # Monitor memory while the process is running
-        while process.poll() is None:
-            try:
-                memory_info = ps_process.memory_info()
-                memory_used = memory_info.rss / (1024 ** 2)  # Convert bytes to megabytes (MB)
-                peak_memory_usage = max(peak_memory_usage, memory_used)
-
-                # Check if the process has child processes and include their memory usage
-                for child in ps_process.children(recursive=True):
-                    child_memory_info = child.memory_info()
-                    child_memory_used = child_memory_info.rss / (1024 ** 2)
-                    peak_memory_usage = max(peak_memory_usage, child_memory_used)
-
-                time.sleep(0.1)  # Shorter interval to capture fast changes
-            except psutil.NoSuchProcess:
-                break  # If the process finishes quickly
-
-        if return_code != 0:
-            print(f"Errors from the nuXmv_solver.exe:\n{stderr}")
-        else:
-            with open(output_file, 'a') as f:
-                f.write("\n--- nuXmv Sokoban Solver Results ---\n")
-                f.write(stdout if stdout else 'No output received.\n')
-                f.write(f"Peak Memory Usage: {peak_memory_usage:.2f} MB\n")
-            print(f"Output from the nuXmv_solver.exe:\n{stdout if stdout else 'No output received.'}")
-            print(f"Peak Memory Usage: {peak_memory_usage:.2f} MB")
-
-    except Exception as e:
-        print(f"Failed to run the nuXmv_solver.exe: {e}")
     
 
 def monitor_memory(ps_process, peak_memory):
@@ -148,7 +77,7 @@ def monitor_memory(ps_process, peak_memory):
     except Exception as e:
         print(f"Error in memory monitoring: {e}")
 
-def run_fast_nuxMv_solver(solver_path, board_path, output_file, iterative_mode=False, bdd=False,steps=None):
+def run_nuxMv_solver(solver_path, board_path, output_file, iterative_mode=False, bdd=False,steps=None):
     """
     Runs the nuXmv_solver.exe with the specified parameters directly and enforces a timeout using subprocess.
     """
@@ -181,10 +110,10 @@ def run_fast_nuxMv_solver(solver_path, board_path, output_file, iterative_mode=F
 
         try:
             # Capture the output and error (if any) from the process with a timeout
-            stdout, stderr = process.communicate(timeout=9000)
+            stdout, stderr = process.communicate(timeout=3600)
             return_code = process.returncode
         except subprocess.TimeoutExpired:
-            print("The command exceeded the timeout of 1.5 Hour and was terminated.")
+            print("The command exceeded the timeout of 1 Hour and was terminated.")
             
             # Kill the process and any child processes
             parent = psutil.Process(process.pid)
@@ -194,7 +123,7 @@ def run_fast_nuxMv_solver(solver_path, board_path, output_file, iterative_mode=F
 
             with open(output_file, 'a') as f:
                 f.write("\n--- nuXmv Sokoban Solver Results ---\n")
-                f.write("nuXmv Solver cannot solve this board in 1.5 Hour.\n")
+                f.write("nuXmv Solver cannot solve this board in 1 Hour.\n")
                 f.write(f"BDD: {bdd} Iterative Mode: {iterative_mode} steps:{steps}\n")
                 f.write(f"Peak Memory Usage: {peak_memory_usage[0]:.2f} MB\n")
             return  # Exit the function
@@ -315,10 +244,10 @@ def remove_files_with_pattern(directory, pattern):
 def runSolvers(board_path,output_file):
     # Paths to the solvers
     solver_takaken_path=os.path.join('exe_files', 'takaken74.exe')# Path to takaken74.exe
-    solver_nuXmv_path = os.path.join('exe_files', 'sokoban_nuXmv_2.exe')  # Path to sokoban_solver.exe
+    solver_nuXmv_dynamic_deadlock_path = os.path.join('exe_files', 'sokoban_dynamic_deadlocks.exe')  # Path to sokoban_solver.exe
     solver_YASS_path =os.path.join('exe_files', 'YASS.exe')# Path to YASS.exe
-    solver_nuXmv_deadlock_path = os.path.join('exe_files', 'sokoban_deadlock_justice.exe')  # Path to sokoban_solver.exe
-
+    solver_nuXmv_static_deadlock_path = os.path.join('exe_files', 'sokoban_static_deadlocks.exe')  # Path to sokoban_solver.exe
+    solver_nuXmv_no_deadlock_path = os.path.join('exe_files', 'sokoban_no_deadlocks.exe')  # Path to sokoban_solver.exe
     # Run the takaken solver
     print("Running the takaken74 solver...")
     run_takaken_solver(solver_takaken_path, board_path, output_file, time_limit=600, level_number="1")
@@ -335,15 +264,19 @@ def runSolvers(board_path,output_file):
     
     # Run the sokoban_nuXmv.exe BMC mode
     #print("Running the sokoban_nuXmv.exe SAT BMC mode...")
-    #run_fast_nuxMv_solver(solver_nuXmv_path,board_path , output_file, iterative_mode=False, bdd=True)
+    #run_nuxMv_solver(solver_nuXmv_path,board_path , output_file, iterative_mode=False, bdd=True)
     
     # Run the sokoban_nuXmv.exe BMC mode
-    print("Running the sokoban_deadlock_justice.exe Deadlocks...")
-    run_fast_nuxMv_solver(solver_nuXmv_deadlock_path,board_path , output_file, iterative_mode=False, bdd=True)
+    print("Running the sokoban_dynamic_deadlocks.exe Deadlocks...")
+    run_nuxMv_solver(solver_nuXmv_dynamic_deadlock_path,board_path , output_file, iterative_mode=False, bdd=True)
 
     # Run the sokoban_nuXmv.exe BMC mode
-    print("Running the sokoban_nuXmv_2.exe  ...")
-    run_fast_nuxMv_solver(solver_nuXmv_path,board_path , output_file, iterative_mode=False, bdd=True)
+    print("Running the sokoban_static_deadlocks.exe  ...")
+    run_nuxMv_solver(solver_nuXmv_static_deadlock_path,board_path , output_file, iterative_mode=False, bdd=True)
+
+    # Run the sokoban_nuXmv.exe BMC mode
+    print("Running the sokoban_no_deadlocks.exe  ...")
+    run_nuxMv_solver(solver_nuXmv_no_deadlock_path,board_path , output_file, iterative_mode=False, bdd=True)
 
     board_directory=os.path.dirname(board_path)
     remove_files_with_pattern(board_directory,"YASS 2.151")
@@ -414,7 +347,7 @@ def runSolversForSingleBoard(board_directory,board_file):
 
 def main():
     # Path to the Sokoban board file and output file
-    board_directory='simple boards'
+    board_directory='boards to test'
     
     #Run Solvers for directory
     runSolversForDirectory(board_directory)
